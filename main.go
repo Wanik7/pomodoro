@@ -15,6 +15,12 @@ const (
 
 type mode int
 
+type task struct {
+	ID   int
+	name string
+	done bool
+}
+
 type tickMsg struct{}
 
 type model struct {
@@ -24,11 +30,18 @@ type model struct {
 	secondsLeft   int
 	running       bool
 	quitting      bool
+
+	tasks []task
 }
 
 func initialModel() model {
 	const workTime int = 15
 	const breakTime int = 5
+
+	tasks := []task{
+		task{1, "do anything", true},
+		task{2, "do stage 5", false},
+	}
 	return model{
 		mode:          workMode,
 		workDuration:  workTime,
@@ -36,6 +49,8 @@ func initialModel() model {
 		secondsLeft:   workTime,
 		running:       true,
 		quitting:      false,
+
+		tasks: tasks,
 	}
 }
 
@@ -106,6 +121,17 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m model) View() string {
+	var tasks string
+	for _, task := range m.tasks {
+		doneString := ""
+		if task.done {
+			doneString = "[X]"
+		} else {
+			doneString = "[ ]"
+		}
+		tasks += fmt.Sprintf("ID: %d | title: %s | done: %s", task.ID, task.name, doneString) + "\n     "
+	}
+
 	mm := m.secondsLeft / 60
 	ss := m.secondsLeft % 60
 	status := "running"
@@ -119,8 +145,13 @@ func (m model) View() string {
 	if m.quitting {
 		return "Bye!"
 	} else {
-		return fmt.Sprintf("\n		Pomodoro\n\nMode: %s 	Time left: %d%d (%s)\n\nPress 'p' to pause,"+
-			" 'r' to reset, 'm' to change mode\n\n	Press 'q'/'ctrl+c' to quit", modeStr, mm, ss, status)
+		return fmt.Sprintf("\n		  Pomodoro\n\n"+
+			"      Mode: %s  Time left: %d%d (%s)\n\n"+
+			"     %s\n\n"+
+			"Press 'p' to pause,"+
+			" 'r' to reset, 'm' to change mode\n\n"+
+			"	  Press 'q'/'ctrl+c' to quit",
+			modeStr, mm, ss, status, tasks)
 	}
 }
 
