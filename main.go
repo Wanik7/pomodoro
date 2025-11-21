@@ -5,6 +5,7 @@ import (
 	"log"
 	"time"
 
+	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 )
 
@@ -32,11 +33,20 @@ type model struct {
 	quitting      bool
 
 	tasks []task
+
+	nextID int
+	adding bool
+	input  textinput.Model
 }
 
 func initialModel() model {
 	const workTime int = 15
 	const breakTime int = 5
+
+	ti := textinput.New()
+	ti.Placeholder = "input something"
+	ti.CharLimit = 200
+	ti.Width = 40
 
 	tasks := []task{
 		{1, "do anything", true},
@@ -49,8 +59,10 @@ func initialModel() model {
 		secondsLeft:   workTime,
 		running:       true,
 		quitting:      false,
-
-		tasks: tasks,
+		tasks:         tasks,
+		nextID:        3,
+		adding:        false,
+		input:         ti,
 	}
 }
 
@@ -83,7 +95,7 @@ func (m *model) switchMode() {
 func (m model) Init() tea.Cmd { return tickCmd() }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	switch msg := msg.(type) {
+	switch msg.(type) {
 	case tickMsg:
 		if m.running && m.secondsLeft > 0 {
 			m.secondsLeft--
@@ -92,44 +104,83 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		return m, tickCmd()
+	}
 
+	if m.adding {
+		if keyMsg, ok := msg.(tea.KeyMsg); ok {
+			switch keyMsg.String() {
+			case "enter":
+				val := m.input.Value()
+				if val != "" {
+					m.tasks = append(m.tasks, task{ID: m.nextID, name: val})
+					m.nextID++
+				}
+				m.input.Reset()
+				m.adding = false
+				return m, nil
+			case "esc":
+				m.input.Reset()
+				m.adding = false
+				return m, nil
+			case "ctrl+c":
+				m.quitting = true
+				return m, tea.Quit
+			}
+		}
+		var cmd tea.Cmd
+		m.input, cmd = m.input.Update(msg)
+		return m, cmd
+	}
+
+	// 3. Обычный режим
+	switch msg := msg.(type) {
 	case tea.KeyMsg:
-
 		switch msg.String() {
-		case "ctrl+c", "q":
+		case "q", "esc", "ctrl+c":
 			m.quitting = true
 			return m, tea.Quit
-
 		case "p":
-			if m.secondsLeft > 0 {
-				m.running = !m.running
-			}
+			m.running = !m.running
 			return m, nil
-
 		case "r":
 			m.secondsLeft = m.currentDuration()
 			m.running = true
 			return m, nil
-
 		case "m":
 			m.switchMode()
 			m.running = true
 			return m, nil
+		case "a":
+			m.adding = true
+			m.input.Focus()
+			return m, nil
 		}
 	}
+
 	return m, nil
 }
 
 func (m model) View() string {
 	var tasks string
-	for _, task := range m.tasks {
-		doneString := ""
-		if task.done {
-			doneString = "[X]"
-		} else {
-			doneString = "[ ]"
+	if len(m.tasks) == 0 {
+		tasks = "there is no tasks"
+	} else {
+		for _, task := range m.tasks {
+			doneString := ""
+			if task.done {
+				doneString = "[X]"
+			} else {
+				doneString = "[ ]"
+			}
+			tasks += fmt.Sprintf("ID: %d | title: %s | done: %s", task.ID, task.name, doneString) + "\n     "
 		}
-		tasks += fmt.Sprintf("ID: %d | title: %s | done: %s", task.ID, task.name, doneString) + "\n     "
+	}
+
+	var addBlock string
+	if m.adding {
+		addBlock = "\nadd a task:\n" + m.input.View() + "\n(Enter to add, Esc to cancel)\n"
+	} else {
+		addBlock = "\nPress a to add a new task\n"
 	}
 
 	mm := m.secondsLeft / 60
@@ -148,10 +199,11 @@ func (m model) View() string {
 		return fmt.Sprintf("\n		  Pomodoro\n\n"+
 			"      Mode: %s  Time left: %d%d (%s)\n\n"+
 			"     %s\n\n"+
+			"	  %s\n\n"+
 			"Press 'p' to pause,"+
-			" 'r' to reset, 'm' to change mode\n\n"+
+			" 'a' to new task, 'r' to reset, 'm' to change mode\n\n"+
 			"	  Press 'q'/'ctrl+c' to quit",
-			modeStr, mm, ss, status, tasks)
+			modeStr, mm, ss, status, tasks, addBlock)
 	}
 }
 
