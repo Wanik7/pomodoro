@@ -39,8 +39,8 @@ func initialModel() model {
 	const breakTime int = 5
 
 	tasks := []task{
-		task{1, "do anything", true},
-		task{2, "do stage 5", false},
+		{1, "do anything", true},
+		{2, "do stage 5", false},
 	}
 	return model{
 		mode:          workMode,
