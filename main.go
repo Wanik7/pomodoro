@@ -1,8 +1,10 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"log"
+	"os"
 	"time"
 
 	"github.com/charmbracelet/bubbles/textinput"
@@ -12,14 +14,26 @@ import (
 const (
 	workMode mode = iota
 	breakMode
+
+	persist_path = "persist.json"
 )
 
 type mode int
 
 type task struct {
-	ID   int
-	name string
-	done bool
+	ID   int    `json:"id"`
+	Name string `json:"name"`
+	Done bool   `json:"done"`
+}
+
+type loadMsg struct {
+	tasks  []task
+	nextID int
+	err    error
+}
+
+type persistMsg struct {
+	err error
 }
 
 type tickMsg struct{}
@@ -37,6 +51,69 @@ type model struct {
 	nextID int
 	adding bool
 	input  textinput.Model
+
+	err error
+}
+
+func loadCmd(path string) tea.Cmd {
+	return func() tea.Msg {
+		f, err := os.Open(path)
+		if err != nil {
+			if os.IsNotExist(err) {
+				return loadMsg{tasks: nil, nextID: 1, err: nil}
+			}
+			return loadMsg{tasks: nil, nextID: 1, err: err}
+		}
+		defer func(f *os.File) {
+			_ = f.Close()
+		}(f)
+
+		var snapshot struct {
+			Tasks  []task `json:"tasks"`
+			NextID int    `json:"next_id"`
+		}
+		if err := json.NewDecoder(f).Decode(&snapshot); err != nil {
+			return loadMsg{tasks: nil, nextID: 1, err: err}
+		}
+		next := snapshot.NextID
+		if next <= 0 {
+			maxID := 0
+			for _, task := range snapshot.Tasks {
+				if task.ID > maxID {
+					maxID = task.ID
+				}
+			}
+			next = maxID + 1
+		}
+		return loadMsg{tasks: snapshot.Tasks, nextID: next, err: nil}
+	}
+}
+
+func saveCmd(path string, tasks []task, nextID int) tea.Cmd {
+	snapshot := struct {
+		Tasks  []task `json:"tasks"`
+		NextID int    `json:"next_id"`
+	}{
+		Tasks:  tasks,
+		NextID: nextID,
+	}
+
+	return func() tea.Msg {
+		f, err := os.Create(path)
+		if err != nil {
+			return loadMsg{tasks: nil, nextID: 1, err: err}
+		}
+		defer func(f *os.File) {
+			_ = f.Close()
+		}(f)
+
+		enc := json.NewEncoder(f)
+		enc.SetIndent("", "  ")
+		if err := enc.Encode(snapshot); err != nil {
+			return loadMsg{tasks: nil, nextID: 1, err: err}
+		}
+		return persistMsg{err: nil}
+	}
 }
 
 func initialModel() model {
@@ -92,7 +169,9 @@ func (m *model) switchMode() {
 	}
 }
 
-func (m model) Init() tea.Cmd { return tickCmd() }
+func (m model) Init() tea.Cmd {
+	return tea.Batch(tickCmd(), loadCmd(persist_path))
+}
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg.(type) {
@@ -112,8 +191,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "enter":
 				val := m.input.Value()
 				if val != "" {
-					m.tasks = append(m.tasks, task{ID: m.nextID, name: val})
+					m.tasks = append(m.tasks, task{ID: m.nextID, Name: val})
 					m.nextID++
+					cmd := saveCmd(persist_path, m.tasks, m.nextID)
+					m.input.Reset()
+					m.adding = false
+					return m, cmd
 				}
 				m.input.Reset()
 				m.adding = false
@@ -132,8 +215,26 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, cmd
 	}
 
-	// 3. Обычный режим
 	switch msg := msg.(type) {
+	case loadMsg:
+		if msg.err != nil {
+			m.err = fmt.Errorf("load failed: %v", msg.err)
+			return m, nil
+		}
+		if msg.tasks != nil {
+			m.tasks = msg.tasks
+			m.nextID = msg.nextID
+		}
+		return m, nil
+
+	case persistMsg:
+		if msg.err != nil {
+			m.err = fmt.Errorf("save failed: %v", msg.err)
+		} else {
+			m.err = nil
+		}
+		return m, nil
+
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "q", "esc", "ctrl+c":
@@ -167,12 +268,12 @@ func (m model) View() string {
 	} else {
 		for _, task := range m.tasks {
 			doneString := ""
-			if task.done {
+			if task.Done {
 				doneString = "[X]"
 			} else {
 				doneString = "[ ]"
 			}
-			tasks += fmt.Sprintf("ID: %d | title: %s | done: %s", task.ID, task.name, doneString) + "\n     "
+			tasks += fmt.Sprintf("ID: %d | title: %s | done: %s", task.ID, task.Name, doneString) + "\n"
 		}
 	}
 
@@ -181,6 +282,11 @@ func (m model) View() string {
 		addBlock = "\nadd a task:\n" + m.input.View() + "\n(Enter to add, Esc to cancel)\n"
 	} else {
 		addBlock = "\nPress a to add a new task\n"
+	}
+
+	var errBlock string
+	if m.err != nil {
+		errBlock = fmt.Sprintf("\nError: %v\n", m.err)
 	}
 
 	mm := m.secondsLeft / 60
@@ -196,14 +302,13 @@ func (m model) View() string {
 	if m.quitting {
 		return "Bye!"
 	} else {
-		return fmt.Sprintf("\n		  Pomodoro\n\n"+
-			"      Mode: %s  Time left: %d%d (%s)\n\n"+
-			"     %s\n\n"+
-			"	  %s\n\n"+
-			"Press 'p' to pause,"+
-			" 'a' to new task, 'r' to reset, 'm' to change mode\n\n"+
-			"	  Press 'q'/'ctrl+c' to quit",
-			modeStr, mm, ss, status, tasks, addBlock)
+		return fmt.Sprintf("Pomodoro\n\n"+
+			"Mode: %s"+
+			"\nTime: %02d:%02d (%s)"+
+			"\n\nTasks:\n"+
+			"%s%sKeys: 'a' add | 'p' pause | 'r' reset | 'm' mode | 'q' quit\n"+
+			"%s",
+			modeStr, mm, ss, status, tasks, addBlock, errBlock)
 	}
 }
 
