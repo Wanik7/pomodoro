@@ -15,7 +15,7 @@ const (
 	workMode mode = iota
 	breakMode
 
-	persist_path = "persist.json"
+	persistPath = "persist.json"
 )
 
 type mode int
@@ -127,7 +127,7 @@ func initialModel() model {
 
 	tasks := []task{
 		{1, "do anything", true},
-		{2, "do stage 5", false},
+		{2, "do stage 7", false},
 	}
 	return model{
 		mode:          workMode,
@@ -170,7 +170,7 @@ func (m *model) switchMode() {
 }
 
 func (m model) Init() tea.Cmd {
-	return tea.Batch(tickCmd(), loadCmd(persist_path))
+	return tea.Batch(tickCmd(), loadCmd(persistPath))
 }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -193,7 +193,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if val != "" {
 					m.tasks = append(m.tasks, task{ID: m.nextID, Name: val})
 					m.nextID++
-					cmd := saveCmd(persist_path, m.tasks, m.nextID)
+					cmd := saveCmd(persistPath, m.tasks, m.nextID)
 					m.input.Reset()
 					m.adding = false
 					return m, cmd
