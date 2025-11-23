@@ -291,7 +291,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m model) View() string {
 	var tasks string
 	if len(m.tasks) == 0 {
-		tasks = "there is no tasks"
+		tasks = "there is no tasks\n"
 	} else {
 		for i, task := range m.tasks {
 			doneString := ""
