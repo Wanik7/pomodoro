@@ -52,7 +52,8 @@ type model struct {
 	adding bool
 	input  textinput.Model
 
-	err error
+	err    error
+	cursor int
 }
 
 func loadCmd(path string) tea.Cmd {
@@ -117,8 +118,8 @@ func saveCmd(path string, tasks []task, nextID int) tea.Cmd {
 }
 
 func initialModel() model {
-	const workTime int = 15
-	const breakTime int = 5
+	const workTime int = 25 * 60
+	const breakTime int = 5 * 60
 
 	ti := textinput.New()
 	ti.Placeholder = "input something"
@@ -127,7 +128,7 @@ func initialModel() model {
 
 	tasks := []task{
 		{1, "do anything", true},
-		{2, "do stage 7", false},
+		{2, "go to sleep", false},
 	}
 	return model{
 		mode:          workMode,
@@ -140,6 +141,7 @@ func initialModel() model {
 		nextID:        3,
 		adding:        false,
 		input:         ti,
+		cursor:        0,
 	}
 }
 
@@ -193,6 +195,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if val != "" {
 					m.tasks = append(m.tasks, task{ID: m.nextID, Name: val})
 					m.nextID++
+					m.cursor = len(m.tasks) - 1
 					cmd := saveCmd(persistPath, m.tasks, m.nextID)
 					m.input.Reset()
 					m.adding = false
@@ -255,6 +258,30 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.adding = true
 			m.input.Focus()
 			return m, nil
+		case "k":
+			if len(m.tasks) > 0 && m.cursor < (len(m.tasks)-1) {
+				m.cursor++
+			}
+			return m, nil
+		case "j":
+			if len(m.tasks) > 0 && m.cursor > 0 {
+				m.cursor--
+			}
+			return m, nil
+		case " ", "enter":
+			if len(m.tasks) > 0 {
+				m.tasks[m.cursor].Done = !m.tasks[m.cursor].Done
+				return m, saveCmd(persistPath, m.tasks, m.nextID)
+			}
+			return m, nil
+		case "d":
+			if len(m.tasks) > 0 {
+				m.tasks = append(m.tasks[:m.cursor], m.tasks[m.cursor+1:]...)
+				if m.cursor >= len(m.tasks) && m.cursor > 0 {
+					m.cursor--
+				}
+				return m, saveCmd(persistPath, m.tasks, m.nextID)
+			}
 		}
 	}
 
@@ -266,22 +293,27 @@ func (m model) View() string {
 	if len(m.tasks) == 0 {
 		tasks = "there is no tasks"
 	} else {
-		for _, task := range m.tasks {
+		for i, task := range m.tasks {
 			doneString := ""
+			isCursor := ""
+			if m.cursor == i {
+				isCursor = "<"
+			}
 			if task.Done {
 				doneString = "[X]"
 			} else {
 				doneString = "[ ]"
 			}
-			tasks += fmt.Sprintf("ID: %d | title: %s | done: %s", task.ID, task.Name, doneString) + "\n"
+			tasks += fmt.Sprintf("ID: %d | title: %s | done: %s %s",
+				task.ID, task.Name, doneString, isCursor) + "\n"
 		}
 	}
 
 	var addBlock string
 	if m.adding {
-		addBlock = "\nadd a task:\n" + m.input.View() + "\n(Enter to add, Esc to cancel)\n"
+		addBlock = "\nadd a task:\n" + m.input.View() + "\n(Enter to add, Esc to cancel)\n\n"
 	} else {
-		addBlock = "\nPress a to add a new task\n"
+		addBlock = "\nPress 'a' to add a new task\n\nPress 'k'/'j' to navigate | 'enter'/'space to complete task\n\n"
 	}
 
 	var errBlock string
@@ -306,7 +338,7 @@ func (m model) View() string {
 			"Mode: %s"+
 			"\nTime: %02d:%02d (%s)"+
 			"\n\nTasks:\n"+
-			"%s%sKeys: 'a' add | 'p' pause | 'r' reset | 'm' mode | 'q' quit\n"+
+			"%s%sKeys: 'p' pause | 'r' reset | 'm' mode | 'q' quit\n"+
 			"%s",
 			modeStr, mm, ss, status, tasks, addBlock, errBlock)
 	}
